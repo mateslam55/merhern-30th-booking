@@ -1348,7 +1348,7 @@
 <script>
   const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwAk4Pnom5DHteSTP5Z3s0Dm5lNElpkN4eewD2EJi7mQoJ2pMpwKJmw--jYIdedmj9_/exec";
   const TABLE_PRICE = 4000;
-  const POLL_INTERVAL_MS = 8000; // ความถี่ในการเช็คสถานะโต๊ะแบบเรียลไทม์
+  const POLL_INTERVAL_MS = 12000; // ความถี่ในการเช็คสถานะโต๊ะแบบเรียลไทม์ (หยุดเช็คเมื่อสลับไปแท็บ/แอปอื่น เพื่อลดภาระเซิร์ฟเวอร์)
   const MAX_SLIP_SIZE_BYTES = 8 * 1024 * 1024; // จำกัดขนาดไฟล์สลิปไม่เกิน 8MB ป้องกัน payload ใหญ่เกินไป
   const EVENT_DATE_STR = '2027-01-30'; // วันงาน (เวลาไทย, Asia/Bangkok)
 
@@ -1380,8 +1380,82 @@
   // in the review step is guaranteed to be exactly what gets uploaded (no chance of a
   // second, different file read causing a mismatch between preview and submission).
   let bookingSlipPreviewData = null;
+  // รหัสคำขอ (สุ่มใหม่ทุกครั้งที่เปิดหน้ายืนยัน) — ถ้ากดยืนยันซ้ำเพราะเน็ตหลุด ระบบจะรู้ว่าเป็นคำขอเดิม ไม่บันทึกซ้ำ
+  let bookingRequestId = null;
+  let souvenirRequestId = null;
   let souvenirSlipPreviewData = null;
   let bookedTablesCache = [];
+
+
+  /* ---------------- ส่งข้อมูลแบบกันบันทึกซ้ำ ---------------- */
+  function newRequestId() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return 'r' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  }
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  // ส่งคำสั่งซื้อ/การจอง: ถ้าเน็ตหลุดหรือระบบตอบช้าจนไม่ได้รับผล จะถามระบบก่อนว่าบันทึกไปแล้วหรือยัง
+  // (เดิมหน้าเว็บขึ้นว่า "ลองใหม่อีกครั้ง" ทันที ลูกค้าจึงกดส่งซ้ำ ทั้งที่ระบบบันทึกสำเร็จไปแล้ว → เกิดรายการซ้ำ)
+  async function submitOrderSafely(payload) {
+    try {
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      const res = await response.json();
+      if (!res.success && res.needConfirm) {
+        if (window.confirm(res.message)) return submitOrderSafely({ ...payload, confirmDuplicate: true });
+        return { success: false, cancelledByUser: true };
+      }
+      return res;
+    } catch (err) {
+      console.error(err);
+      for (let i = 0; i < 4; i++) {
+        await sleep(3000);
+        try {
+          const r = await fetch(`${GAS_WEB_APP_URL}?action=checkSubmission&requestId=${encodeURIComponent(payload.requestId)}`);
+          const j = await r.json();
+          if (j.success && j.found) return { success: true, bookingId: j.id, recovered: true };
+          if (j.success && !j.found) break;
+        } catch (e) { /* ยังเชื่อมต่อไม่ได้ ลองใหม่รอบถัดไป */ }
+      }
+      return { success: false, networkError: true };
+    }
+  }
+
+  const NETWORK_RETRY_MESSAGE = 'การเชื่อมต่อขัดข้อง ระบบยังไม่ได้รับข้อมูล — กดยืนยันอีกครั้งได้เลย (ระบบกันการบันทึกซ้ำให้แล้ว)';
+
+  // อ่านรูปสลิปเป็น data URL และย่อรูปที่ใหญ่เกิน 600KB (ด้านยาวสุด 2000px, JPEG) ให้ส่งได้เร็วขึ้น
+  // รูปที่ได้คือรูปเดียวกับที่แสดงในหน้ายืนยัน และเป็นรูปที่ถูกส่งขึ้นระบบจริง
+  function readSlipAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        const original = reader.result;
+        if (!/^image\/(jpeg|jpg|png|webp)$/i.test(file.type) || file.size <= 600 * 1024) { resolve(original); return; }
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const MAX_SIDE = 2000;
+            const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+            const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            const out = canvas.toDataURL('image/jpeg', 0.85);
+            resolve(out.length < original.length ? out : original);
+          } catch (e) { resolve(original); }
+        };
+        img.onerror = () => resolve(original);
+        img.src = original;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
   /* ---------------- Countdown to event date (live, Asia/Bangkok) ---------------- */
   function getBangkokDateStr(date) {
@@ -1596,12 +1670,9 @@
     const name = document.getElementById('custName').value;
     const phone = document.getElementById('custPhone').value;
 
-    const reader = new FileReader();
-    reader.onerror = function () {
-      showToast('ไม่สามารถอ่านไฟล์สลิปได้ กรุณาลองแนบไฟล์อีกครั้ง');
-    };
-    reader.onload = function () {
-      bookingSlipPreviewData = reader.result;
+    readSlipAsDataUrl(file).then(function (dataUrl) {
+      bookingSlipPreviewData = dataUrl;
+      bookingRequestId = newRequestId();
 
       document.getElementById('bookingReviewTable').innerText = tableNo || '-';
       document.getElementById('bookingReviewName').innerText = name || '-';
@@ -1612,8 +1683,9 @@
 
       closeAllOverlays();
       document.getElementById('bookingReviewModal').classList.add('active');
-    };
-    reader.readAsDataURL(file);
+    }).catch(function () {
+      showToast('ไม่สามารถอ่านไฟล์สลิปได้ กรุณาลองแนบไฟล์อีกครั้ง');
+    });
   }
 
   function closeBookingReview() {
@@ -1642,16 +1714,12 @@
       phone: document.getElementById('custPhone').value,
       tablePrice: TABLE_PRICE,
       totalAmount: TABLE_PRICE,
-      slipBase64: bookingSlipPreviewData
+      slipBase64: bookingSlipPreviewData,
+      requestId: bookingRequestId || (bookingRequestId = newRequestId())
     };
 
     try {
-      const response = await fetch(GAS_WEB_APP_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(payload)
-      });
-      const res = await response.json();
+      const res = await submitOrderSafely(payload);
       if (res.success) {
         selectedTableBtn.classList.add('booked');
         selectedTableBtn.disabled = true;
@@ -1665,16 +1733,19 @@
         document.getElementById('slipFileName').classList.remove('has-file');
         document.getElementById('bookingReviewSlipImg').src = '';
         bookingSlipPreviewData = null;
+        bookingRequestId = null;
         showSuccessOverlay(`โต๊ะ ${payload.tableNo} • รหัสจอง ${res.bookingId} • ยอดชำระ ${TABLE_PRICE.toLocaleString('th-TH')} บาท`);
         // ดึงสถานะล่าสุดทันทีหลังจองสำเร็จ ไม่ต้องรอรอบ poll ถัดไป
         syncBookedTables();
-      } else {
+      } else if (res.networkError) {
+        showToast(NETWORK_RETRY_MESSAGE);
+      } else if (!res.cancelledByUser) {
         showToast(`ข้อผิดพลาด: ${res.message}`);
         // อาจมีคนจองโต๊ะนี้ไปก่อนแล้วในช่วงที่กรอกฟอร์มอยู่ — รีเฟรชสถานะให้ตรงกับความจริง
         syncBookedTables();
       }
     } catch (err) {
-      showToast("เกิดข้อผิดพลาดในการเชื่อมต่อระบบ กรุณาลองใหม่อีกครั้ง");
+      showToast(NETWORK_RETRY_MESSAGE);
       console.error(err);
     } finally {
       btn.innerText = originalBtnText;
@@ -1685,6 +1756,7 @@
   /* ---------------- Real-time table status sync ---------------- */
   async function syncBookedTables() {
     if (!GAS_WEB_APP_URL) return;
+    if (document.hidden) return; // ไม่เช็คตอนผู้ใช้สลับไปแอป/แท็บอื่น (กลับมาแล้วจะเช็คทันทีจาก visibilitychange)
     const liveText = document.getElementById('liveStatusText');
     try {
       const res = await fetch(`${GAS_WEB_APP_URL}?action=getBookings`);
@@ -1952,18 +2024,16 @@
     document.getElementById('souvenirReviewTotal').innerText = `${(calculateSouvenirTotal() + shipping).toLocaleString('th-TH')} บาท`;
     document.getElementById('souvenirReviewFileName').innerText = `📎 หลักฐานการโอนเงิน: ${file.name}`;
 
-    const reader = new FileReader();
-    reader.onerror = function () {
-      showToast('ไม่สามารถอ่านไฟล์สลิปได้ กรุณาลองแนบไฟล์อีกครั้ง');
-    };
-    reader.onload = function () {
-      souvenirSlipPreviewData = reader.result;
+    readSlipAsDataUrl(file).then(function (dataUrl) {
+      souvenirSlipPreviewData = dataUrl;
+      souvenirRequestId = newRequestId();
       document.getElementById('souvenirReviewSlipImg').src = souvenirSlipPreviewData;
 
       closeAllOverlays();
       document.getElementById('souvenirReviewModal').classList.add('active');
-    };
-    reader.readAsDataURL(file);
+    }).catch(function () {
+      showToast('ไม่สามารถอ่านไฟล์สลิปได้ กรุณาลองแนบไฟล์อีกครั้ง');
+    });
   }
 
   function closeSouvenirReview() {
@@ -2002,26 +2072,25 @@
         deliveryAddress: isShip ? document.getElementById('deliveryAddress').value.trim() : '',
         deliveryPostcode: isShip ? document.getElementById('deliveryPostcode').value.trim() : '',
         deliveryPhone: isShip ? document.getElementById('deliveryPhone').value.trim() : '',
-        slipBase64: souvenirSlipPreviewData
+        slipBase64: souvenirSlipPreviewData,
+        requestId: souvenirRequestId || (souvenirRequestId = newRequestId())
       };
 
       try {
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify(payload)
-        });
-        const res = await response.json();
+        const res = await submitOrderSafely(payload);
         if (res.success) {
           closeSouvenirReview();
           resetSouvenirForm();
           souvenirSlipPreviewData = null;
+          souvenirRequestId = null;
           showSuccessOverlay(`คำสั่งซื้อของที่ระลึก • รหัส ${res.bookingId || '-'} • ยอดชำระ ${total.toLocaleString('th-TH')} บาท`);
-        } else {
+        } else if (res.networkError) {
+          showToast(NETWORK_RETRY_MESSAGE);
+        } else if (!res.cancelledByUser) {
           showToast(`ข้อผิดพลาด: ${res.message}`);
         }
       } catch (err) {
-        showToast("เกิดข้อผิดพลาดในการเชื่อมต่อระบบ กรุณาลองใหม่อีกครั้ง");
+        showToast(NETWORK_RETRY_MESSAGE);
         console.error(err);
       } finally {
         btn.innerText = originalBtnText;
