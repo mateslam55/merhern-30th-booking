@@ -149,6 +149,31 @@
     height: 10px; border-radius: 100px; background: rgba(28,27,25,0.07); overflow: hidden;
   }
   .bar-fill { height: 100%; border-radius: 100px; transition: width 500ms var(--ease-out); }
+  .bar-row-note { font-size: 0.72rem; color: var(--ink-faint); margin-top: 5px; }
+
+  /* ---- Piece totals (ชุด 3 ชิ้น แตกเป็นชิ้นจริงแล้ว) ---- */
+  .piece-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .piece-box {
+    border-radius: 16px; padding: 14px 12px; text-align: center; min-width: 0;
+    background: rgba(255,255,255,0.55); border: 1px solid var(--glass-line);
+    border-top: 3px solid var(--piece-color, var(--accent));
+  }
+  .piece-icon { font-size: 1.2rem; }
+  .piece-name { font-size: 0.78rem; color: var(--ink-soft); margin: 2px 0 4px; }
+  .piece-value { font-size: 1.7rem; font-weight: 800; line-height: 1.1; }
+  .piece-value small { font-size: 0.8rem; font-weight: 600; color: var(--ink-soft); }
+  .piece-split { font-size: 0.72rem; color: var(--ink-faint); margin-top: 6px; line-height: 1.45; }
+  .set-note {
+    font-size: 0.78rem; color: var(--ink-soft); background: rgba(124,148,115,0.12);
+    border-radius: 12px; padding: 9px 12px; margin-bottom: 16px;
+  }
+  .set-note strong { color: var(--ink); }
+  .sales-title { font-size: 0.84rem; font-weight: 700; margin: 4px 0 8px; padding-top: 12px; border-top: 1px dashed var(--glass-line); }
+  .sales-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .sales-table td { padding: 6px 2px; border-bottom: 1px solid var(--glass-line); }
+  .sales-table td.num { text-align: right; white-space: nowrap; color: var(--ink-soft); }
+  .sales-table tr.total td { font-weight: 700; color: var(--ink); border-bottom: none; }
+  @media (max-width: 420px) { .piece-value { font-size: 1.45rem; } .piece-box { padding: 12px 6px; } }
 
   /* ---- Status chips ---- */
   .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -261,16 +286,19 @@
 
     <!-- ---- Souvenir items breakdown ---- -->
     <div class="card">
-      <h2>🎁 ของที่ระลึก แยกตามประเภทสินค้า</h2>
-      <p class="card-sub">จำนวนชิ้น และยอดขายแต่ละประเภท (ไม่รวมออเดอร์ที่ยกเลิก)</p>
-      <div id="itemBars"></div>
+      <h2>🎁 ของที่ระลึก — จำนวนชิ้นจริงที่ต้องเตรียม</h2>
+      <p class="card-sub">นับเป็นชิ้นจริงทุกชิ้น: ชุด 3 ชิ้น 1 ชุด = แก้ว 1 + เสื้อ 1 + พวงกุญแจ 1 · นับเฉพาะคำสั่งซื้อจริง (ตัดคำสั่งซื้อที่ยกเลิกออกแล้ว)</p>
+      <div class="piece-grid" id="pieceGrid"></div>
+      <div class="set-note" id="setNote"></div>
+      <div class="sales-title">💰 ยอดขายตามรายการที่ลูกค้าสั่ง</div>
+      <table class="sales-table" id="salesTable"></table>
     </div>
 
     <div class="grid-2">
       <!-- ---- Shirt size breakdown ---- -->
       <div class="card">
-        <h2>👕 ยอดขาย แยกตามไซซ์เสื้อ</h2>
-        <p class="card-sub">รวมเสื้อเดี่ยว + เสื้อในชุด 3 ชิ้น</p>
+        <h2>👕 เสื้อโปโล แยกตามไซซ์</h2>
+        <p class="card-sub" id="sizeSub">รวมเสื้อเดี่ยว + เสื้อในชุด 3 ชิ้น</p>
         <div id="sizeBars"></div>
       </div>
 
@@ -303,10 +331,8 @@
 
   const ZONE_COLORS = { A: 'var(--zone-a)', B: 'var(--zone-b)', C: 'var(--zone-c)', D: 'var(--zone-d)', E: 'var(--zone-e)' };
   const ZONE_LABELS = { A: 'โซน A', B: 'โซน B', C: 'โซน C', D: 'โซน D', E: 'โซน E' };
-  const ITEM_ORDER = ['cup', 'shirt', 'keychain', 'set'];
   const ITEM_COLORS = { cup: '#5F8791', shirt: '#B5622F', keychain: '#D6A860', set: '#7C9473' };
-  const ITEM_FALLBACK_NAMES = { cup: 'แก้วน้ำสแตนเลส', shirt: 'เสื้อโปโล', keychain: 'พวงกุญแจ', set: 'ชุดครบ 3 ชิ้น' };
-  const SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+  const SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL', '6XL'];
 
   function baht(n) {
     return `${(Number(n) || 0).toLocaleString('th-TH')} บาท`;
@@ -375,27 +401,52 @@
     renderChip(tableStatusChips, 'ยืนยันแล้ว', t.statusCounts.confirmed || 0, 'confirmed');
     renderChip(tableStatusChips, 'ยกเลิก', t.statusCounts.cancelled || 0, 'cancelled');
 
-    // Item breakdown
-    const itemBars = document.getElementById('itemBars');
-    itemBars.innerHTML = '';
-    const maxItemQty = Math.max(1, ...ITEM_ORDER.map(id => (s.itemBreakdown[id] && s.itemBreakdown[id].qty) || 0));
-    ITEM_ORDER.forEach(id => {
-      const entry = s.itemBreakdown[id];
-      const qty = entry ? entry.qty : 0;
-      const revenue = entry ? entry.revenue : 0;
-      const name = entry ? entry.name : ITEM_FALLBACK_NAMES[id];
-      renderBar(itemBars, {
-        name: name,
-        color: ITEM_COLORS[id],
-        valueLabel: `${qty} ชิ้น · ${baht(revenue)}`,
-        pct: (qty / maxItemQty) * 100
-      });
+    // Item breakdown — แตก "ชุด 3 ชิ้น" เป็นชิ้นจริง (แก้ว/เสื้อ/พวงกุญแจ อย่างละ 1) เพื่อไม่ให้สับสนจำนวน
+    // backend (getDashboardSummary) ตัดคำสั่งซื้อที่สถานะ cancelled ออกก่อนรวมยอดแล้ว
+    const qtyOf = id => (s.itemBreakdown && s.itemBreakdown[id] && Number(s.itemBreakdown[id].qty)) || 0;
+    const revOf = id => (s.itemBreakdown && s.itemBreakdown[id] && Number(s.itemBreakdown[id].revenue)) || 0;
+    const setQty = qtyOf('set');
+    const PIECES = [
+      { id: 'cup', icon: '🥤', name: 'แก้วน้ำ', unit: 'ใบ' },
+      { id: 'shirt', icon: '👕', name: 'เสื้อโปโล', unit: 'ตัว' },
+      { id: 'keychain', icon: '🔑', name: 'พวงกุญแจ', unit: 'อัน' }
+    ];
+    const pieceGrid = document.getElementById('pieceGrid');
+    pieceGrid.innerHTML = '';
+    PIECES.forEach(p => {
+      const single = qtyOf(p.id);
+      const total = single + setQty;
+      const box = document.createElement('div');
+      box.className = 'piece-box';
+      box.style.setProperty('--piece-color', ITEM_COLORS[p.id]);
+      box.innerHTML = `
+        <div class="piece-icon">${p.icon}</div>
+        <div class="piece-name">${p.name}</div>
+        <div class="piece-value">${total}<small> ${p.unit}</small></div>
+        <div class="piece-split">สั่งแยก ${single}<br>จากชุด 3 ชิ้น ${setQty}</div>`;
+      pieceGrid.appendChild(box);
     });
+    document.getElementById('setNote').innerHTML =
+      `มีคำสั่งซื้อ <strong>ชุด 3 ชิ้น ${setQty} ชุด</strong> — นับรวมเป็น แก้ว ${setQty} + เสื้อ ${setQty} + พวงกุญแจ ${setQty} ชิ้นในตัวเลขด้านบนแล้ว`;
+
+    const salesRows = [
+      { label: 'แก้วน้ำสแตนเลส (สั่งแยก)', qty: `${qtyOf('cup')} ใบ`, rev: revOf('cup') },
+      { label: 'เสื้อโปโล (สั่งแยก)', qty: `${qtyOf('shirt')} ตัว`, rev: revOf('shirt') },
+      { label: 'พวงกุญแจ (สั่งแยก)', qty: `${qtyOf('keychain')} อัน`, rev: revOf('keychain') },
+      { label: 'ชุด 3 ชิ้น', qty: `${setQty} ชุด`, rev: revOf('set') }
+    ];
+    const salesTotal = salesRows.reduce((sum, r) => sum + r.rev, 0);
+    document.getElementById('salesTable').innerHTML =
+      salesRows.map(r => `<tr><td>${r.label}</td><td class="num">${r.qty}</td><td class="num">${baht(r.rev)}</td></tr>`).join('') +
+      `<tr class="total"><td>รวมค่าสินค้า (ไม่รวมค่าส่ง)</td><td></td><td class="num">${baht(salesTotal)}</td></tr>`;
 
     // Size breakdown
     const sizeBars = document.getElementById('sizeBars');
     sizeBars.innerHTML = '';
     const maxSizeQty = Math.max(1, ...SIZE_ORDER.map(sz => (s.sizeBreakdown && s.sizeBreakdown[sz]) || 0));
+    const sizeTotal = Object.values(s.sizeBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+    document.getElementById('sizeSub').innerText =
+      `รวมเสื้อเดี่ยว + เสื้อในชุด 3 ชิ้น — ทั้งหมด ${sizeTotal} ตัว (ไม่รวมคำสั่งซื้อที่ยกเลิก)`;
     SIZE_ORDER.forEach(sz => {
       const qty = (s.sizeBreakdown && s.sizeBreakdown[sz]) || 0;
       renderBar(sizeBars, {
