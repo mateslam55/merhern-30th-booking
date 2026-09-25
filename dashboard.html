@@ -474,27 +474,64 @@
     renderChip(souvenirStatusChips, 'ยกเลิก', s.statusCounts.cancelled || 0, 'cancelled');
 
     const now = new Date();
-    document.getElementById('updatedLine').innerText = `อัปเดตล่าสุด: ${now.toLocaleTimeString('th-TH')} น.`;
+    document.getElementById('updatedLine').innerText = `อัปเดตล่าสุด: ${now.toLocaleTimeString('th-TH')} น. · รีเฟรชอัตโนมัติทุก 30 วินาที`;
   }
 
-  async function loadDashboard() {
-    setBtnLoading(true);
-    showState('loading');
+  // รีเฟรชอัตโนมัติ: ดึงข้อมูลใหม่ทุก 30 วินาทีแบบเงียบ (ไม่กระพริบหน้า) เฉพาะตอนที่เปิดหน้านี้อยู่
+  // และดึงทันทีเมื่อสลับกลับมาที่แท็บนี้ — แก้จำนวน/ไซซ์ในชีตแล้ว ตัวเลขที่นี่จะเปลี่ยนตามเอง
+  const AUTO_REFRESH_MS = 30000;
+  let hasData = false;
+  let inFlight = false;
+  let lastLoadAt = 0;
+
+  async function loadDashboard(opts) {
+    const silent = !!(opts && opts.silent) && hasData;
+    if (inFlight) return;
+    inFlight = true;
+    if (!silent) { setBtnLoading(true); if (!hasData) showState('loading'); }
     try {
-      const res = await fetch(`${GAS_WEB_APP_URL}?action=getDashboardSummary`);
-      const json = await res.json();
-      if (!json.success) throw new Error(json.message || 'โหลดข้อมูลไม่สำเร็จ');
+      let json = null, lastErr = null;
+      // ครั้งแรกหลัง Apps Script ว่างนาน ๆ อาจตอบช้า/ล้มเหลว — ลองซ้ำให้อัตโนมัติ 1 ครั้ง
+      for (let attempt = 0; attempt < 2 && !json; attempt++) {
+        try {
+          const res = await fetch(`${GAS_WEB_APP_URL}?action=getDashboardSummary&t=${Date.now()}`, { cache: 'no-store' });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.message || 'โหลดข้อมูลไม่สำเร็จ');
+          json = data;
+        } catch (e) {
+          lastErr = e;
+          if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+      if (!json) throw lastErr;
       renderDashboard(json);
+      hasData = true;
+      lastLoadAt = Date.now();
       showState('ready');
     } catch (err) {
       console.error(err);
-      document.getElementById('errorMessage').innerText =
-        'ไม่สามารถโหลดข้อมูลได้ — ตรวจสอบว่า Code.gs เวอร์ชันล่าสุดถูก deploy แล้ว หรือลองรีเฟรชอีกครั้ง';
-      showState('error');
+      if (hasData) {
+        // มีข้อมูลเดิมแสดงอยู่แล้ว — คงไว้ แล้วบอกว่ารอบนี้ดึงไม่สำเร็จ
+        document.getElementById('updatedLine').innerText =
+          `⚠️ ดึงข้อมูลรอบล่าสุดไม่สำเร็จ (แสดงข้อมูลเมื่อ ${new Date(lastLoadAt).toLocaleTimeString('th-TH')} น.) — จะลองใหม่อัตโนมัติ`;
+      } else {
+        document.getElementById('errorMessage').innerText =
+          'ไม่สามารถโหลดข้อมูลได้ — ตรวจสอบว่า Code.gs เวอร์ชันล่าสุดถูก deploy แล้ว หรือลองรีเฟรชอีกครั้ง';
+        showState('error');
+      }
     } finally {
-      setBtnLoading(false);
+      inFlight = false;
+      if (!silent) setBtnLoading(false);
     }
   }
+
+  setInterval(() => {
+    if (!document.hidden) loadDashboard({ silent: true });
+  }, AUTO_REFRESH_MS);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastLoadAt > 5000) loadDashboard({ silent: true });
+  });
 
   loadDashboard();
 </script>
