@@ -460,6 +460,50 @@
   .souvenir-thumb:hover { transform: scale(1.06); }
   .souvenir-thumb:active { transform: scale(0.96); }
 
+
+  /* ---------- Promo gallery (รูปโปรโมทเสื้อโปโล ในหมวดของที่ระลึก) ---------- */
+  .promo-gallery { margin: 0 0 20px; }
+  .promo-frame { position: relative; }
+  .promo-track {
+    display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+    scroll-behavior: smooth; border-radius: 18px; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .promo-track::-webkit-scrollbar { display: none; }
+  .promo-slide {
+    flex: 0 0 100%; scroll-snap-align: center; aspect-ratio: 3 / 2; margin: 0;
+    border-radius: 18px; overflow: hidden; position: relative; cursor: zoom-in;
+    background: linear-gradient(135deg, #e9e4dc, #dcd4c7);
+    box-shadow: 0 10px 26px rgba(28,27,25,0.12);
+  }
+  .promo-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .promo-badge {
+    position: absolute; top: 12px; left: 12px; z-index: 2; pointer-events: none;
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; color: #fff;
+    background: rgba(18, 34, 66, 0.72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    padding: 5px 11px; border-radius: 100px;
+  }
+  .promo-nav {
+    position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+    width: 36px; height: 36px; border-radius: 50%; border: none; cursor: pointer;
+    background: rgba(255,255,255,0.82); color: #1c1b19; font-size: 1.1rem; line-height: 1;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center;
+    transition: transform 160ms var(--ease-spring), opacity 160ms;
+  }
+  .promo-nav:active { transform: translateY(-50%) scale(0.92); }
+  .promo-nav.prev { left: 10px; }
+  .promo-nav.next { right: 10px; }
+  .promo-dots { display: flex; justify-content: center; gap: 7px; margin-top: 10px; }
+  .promo-dot {
+    width: 8px; height: 8px; border-radius: 100px; border: none; padding: 0; cursor: pointer;
+    background: rgba(28,27,25,0.18); transition: width 220ms var(--ease-spring), background 220ms;
+  }
+  .promo-dot.active { width: 22px; background: var(--accent); }
+  .promo-caption { text-align: center; margin-top: 8px; }
+  .promo-caption strong { display: block; font-size: 0.92rem; font-weight: 700; }
+  .promo-caption span { font-size: 0.78rem; color: var(--ink-soft); }
+  @media (hover: none) { .promo-nav { display: none; } }
+
   /* ---------- Image lightbox ---------- */
   .lightbox-overlay {
     position: fixed; inset: 0; z-index: 200;
@@ -953,6 +997,25 @@
       <div class="section-head">
         <h2>🎁 สั่งซื้อของที่ระลึก</h2>
         <p>เลือกของที่ระลึกได้อิสระ ไม่ผูกกับการจองโต๊ะ</p>
+      </div>
+
+      <!-- ======== รูปโปรโมทเสื้อโปโล (ไฟล์รูปแยก โหลดเมื่อเปิดหมวดของที่ระลึกเท่านั้น) ======== -->
+      <div class="promo-gallery" id="promoGallery">
+        <div class="promo-frame">
+          <div class="promo-track" id="promoTrack">
+            <figure class="promo-slide"><img src="promo-shirt-1.jpg" alt="เสื้อโปโลที่ระลึก 30 ปี — สวมใส่ที่ไซต์งานก่อสร้าง" loading="lazy" decoding="async" width="1280" height="853"></figure>
+            <figure class="promo-slide"><img src="promo-shirt-2.jpg" alt="เสื้อโปโลที่ระลึก 30 ปี — เดินขึ้นบันไดสวน" loading="lazy" decoding="async" width="1280" height="853"></figure>
+            <figure class="promo-slide"><img src="promo-shirt-3.jpg" alt="เสื้อโปโลที่ระลึก 30 ปี — ถ่ายภาพหมู่หน้าบันได" loading="lazy" decoding="async" width="1280" height="853"></figure>
+          </div>
+          <span class="promo-badge">✨ เสื้อโปโลที่ระลึก 30 ปี</span>
+          <button type="button" class="promo-nav prev" aria-label="รูปก่อนหน้า" onclick="promoGo(-1)">‹</button>
+          <button type="button" class="promo-nav next" aria-label="รูปถัดไป" onclick="promoGo(1)">›</button>
+        </div>
+        <div class="promo-dots" id="promoDots"></div>
+        <div class="promo-caption">
+          <strong>เสื้อโปโลสีกรมท่า ปักโลโก้ครบรอบ 30 ปี</strong>
+          <span id="promoPriceLine">มีไซซ์ XS–6XL · แตะรูปเพื่อดูเต็มจอ</span>
+        </div>
       </div>
 
       <form id="souvenirForm" onsubmit="openSouvenirReview(event)">
@@ -1497,6 +1560,70 @@
     if (labelEl) labelEl.innerText = `ค่าจองโต๊ะ (${priceStr} บาท / โต๊ะ)`;
     if (valueEl) valueEl.innerText = `${priceStr} บาท`;
   }
+
+
+  /* ---------------- Promo gallery (เลื่อนดูรูปเสื้อ + เปิดเต็มจอ) ---------------- */
+  (function initPromoGallery() {
+    const track = document.getElementById('promoTrack');
+    const dotsEl = document.getElementById('promoDots');
+    if (!track || !dotsEl) return;
+    const slides = () => Array.from(track.querySelectorAll('.promo-slide'));
+    let autoTimer = null;
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function current() {
+      const w = track.clientWidth || 1;
+      return Math.round(track.scrollLeft / (w + 10));
+    }
+    function renderDots() {
+      const n = slides().length;
+      dotsEl.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        const d = document.createElement('button');
+        d.type = 'button'; d.className = 'promo-dot'; d.setAttribute('aria-label', `รูปที่ ${i + 1}`);
+        d.onclick = () => { stopAuto(); goTo(i); };
+        dotsEl.appendChild(d);
+      }
+      updateDots();
+      const g = document.getElementById('promoGallery');
+      if (g) g.hidden = n === 0;
+    }
+    function updateDots() {
+      const i = current();
+      dotsEl.querySelectorAll('.promo-dot').forEach((d, k) => d.classList.toggle('active', k === i));
+    }
+    function goTo(i) {
+      const n = slides().length; if (!n) return;
+      const idx = (i + n) % n;
+      track.scrollTo({ left: idx * (track.clientWidth + 10), behavior: reduceMotion ? 'auto' : 'smooth' });
+    }
+    function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
+    window.promoGo = function (step) { stopAuto(); goTo(current() + step); };
+
+    track.addEventListener('scroll', () => requestAnimationFrame(updateDots), { passive: true });
+    ['touchstart', 'pointerdown', 'wheel'].forEach(ev => track.addEventListener(ev, stopAuto, { passive: true }));
+
+    slides().forEach((fig, k) => {
+      const img = fig.querySelector('img');
+      fig.addEventListener('click', () => { stopAuto(); openLightbox(img.currentSrc || img.src, `เสื้อโปโลที่ระลึก 30 ปี (${k + 1}/${slides().length})`); });
+      // ถ้าไฟล์รูปโหลดไม่ได้ ให้ซ่อนสไลด์นั้น (ไม่ให้เห็นกรอบว่าง)
+      img.addEventListener('error', () => { fig.remove(); renderDots(); });
+    });
+
+    const priceLine = document.getElementById('promoPriceLine');
+    if (priceLine && typeof SOUVENIRS !== 'undefined') {
+      priceLine.innerHTML = `<span style="white-space:nowrap">ตัวละ ${SOUVENIRS.shirt.price} บาท</span> · <span style="white-space:nowrap">ชุด 3 ชิ้น ${SOUVENIRS.set.price} บาท</span> · <span style="white-space:nowrap">ไซซ์ XS–6XL</span><br><span style="font-size:0.72rem;color:var(--ink-faint)">เลื่อนดูรูปอื่น หรือแตะรูปเพื่อดูเต็มจอ</span>`;
+    }
+
+    renderDots();
+    if (!reduceMotion) {
+      autoTimer = setInterval(() => {
+        if (document.hidden || track.offsetParent === null) return; // ไม่เลื่อนตอนซ่อนแท็บ/อยู่หน้าจองโต๊ะ
+        goTo(current() + 1);
+      }, 4500);
+    }
+    window.addEventListener('resize', () => requestAnimationFrame(() => goTo(current())));
+  })();
 
   /* ---------------- Image Lightbox ---------------- */
   function openLightbox(src, caption) {
